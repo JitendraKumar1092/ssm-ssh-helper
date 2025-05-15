@@ -1,0 +1,57 @@
+_aws_ec2_instance_completion() {
+    local cur_word instance_names cache_file cache_ttl=300 # 5 minutes 
+    cur_word="${COMP_WORDS[COMP_CWORD]}"
+    cache_file="/tmp/aws_instance_names_cache"
+
+    
+    if [[ -f "$cache_file" ]]; then
+        
+        if [[ "$(uname)" == "Darwin" ]]; then
+            # macOS: Use `stat -f %m`
+            cache_age=$(( $(date +%s) - $(stat -f %m "$cache_file") ))
+        else
+            # Linux: Use `stat -c %Y`
+            cache_age=$(( $(date +%s) - $(stat -c %Y "$cache_file") ))
+        fi
+    else
+        cache_age=$cache_ttl
+    fi
+
+    # Refresh cache if more than 5 minue old
+    if [[ ! -f "$cache_file" || $cache_age -ge $cache_ttl ]]; then
+        
+        echo -n "Fetching instances...Wait " >&2
+        (
+            instance_names=$(aws ec2 describe-instances \
+                --filters Name=instance-state-name,Values=running \
+                --query 'Reservations[*].Instances[*].Tags[?Key==`Name`].Value' \
+                --output text --region ap-south-1 2>/dev/null)
+            echo "$instance_names" > "$cache_file"
+        ) &
+        spinner_pid=$!
+
+        # Spinner animation ..it looks bad ik :// 
+        while kill -0 $spinner_pid 2>/dev/null; do
+            for s in / - \\ \|; do
+                echo -n "$s" >&2
+                sleep 0.1
+                echo -ne "\b" >&2
+            done
+        done
+        wait $spinner_pid
+        echo "Done!" >&2
+    else
+        instance_names=$(cat "$cache_file")
+    fi
+
+    COMPREPLY=( $(compgen -W "${instance_names}" -- "${cur_word}") )
+}
+
+
+complete -F _aws_ec2_instance_completion ssm
+
+# ssm will handle the comlletions using above func and call the ssm script with the name of the instance
+# the script will ssm into your instnace
+function ssm() {
+  ~/ssm-ssh-proxy.sh "$1"
+}
